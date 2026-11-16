@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Awbrey Glen</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 16px/1.4 system-ui, sans-serif; }
+  #bar { display: flex; gap: 1rem; align-items: center; padding: 0.7rem 1rem; }
+  a { color: #9dccff; }
+  button { color: #eee; background: #1c2430; border: 1px solid #3d4d66; border-radius: 6px; font: inherit; padding: 0.25rem 0.8rem; cursor: pointer; }
+  #stage { position: relative; height: calc(100% - 3.2rem); background: #000; }
+  #view, #ortho { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #ortho { display: none; object-fit: contain; background: #000; }
+  #err { padding: 1.5rem; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <a href="./">All holes</a>
+  <strong id="title">Hole</strong>
+  <button id="orthoBtn" type="button">ORTHO</button>
+</div>
+<div id="stage">
+  <canvas id="view"></canvas>
+  <img id="ortho" alt="Orthophoto">
+</div>
+<p id="err" hidden></p>
+<script type="importmap">
+{ "imports": { "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from "three";
+
+const BASE = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm";
+const { GLTFLoader } = await import(BASE + "/loaders/GLTFLoader.js");
+const { DRACOLoader } = await import(BASE + "/loaders/DRACOLoader.js");
+const { OrbitControls } = await import(BASE + "/controls/OrbitControls.js");
+
+const params = new URLSearchParams(location.search);
+const hole = params.get("hole");
+const title = document.getElementById("title");
+const canvas = document.getElementById("view");
+const img = document.getElementById("ortho");
+const err = document.getElementById("err");
+
+function fail(message) {
+  err.hidden = false;
+  err.textContent = message;
+}
+
+let label = "";
+let modelUrl = "";
+let orthoUrl = "";
+if (hole === "17-original") {
+  label = "Hole 17 original";
+  modelUrl = "holes/17-original/model.glb";
+  orthoUrl = "holes/17-original/ortho.jpg";
+} else {
+  const n = Number(hole);
+  if (!Number.isInteger(n) || n < 1 || n > 18) {
+    fail("Open a hole from the list.");
+  } else {
+    const id = String(n).padStart(2, "0");
+    label = "Hole " + n;
+    modelUrl = "holes/" + id + "/model.glb";
+    orthoUrl = "holes/" + id + "/ortho.jpg";
+  }
+}
+if (label) {
+  title.textContent = label;
+  document.title = label + " — Awbrey Glen";
+  img.src = orthoUrl;
+  img.alt = label + " orthophoto";
+}
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x111111);
+const scene = new THREE.Scene();
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.55);
+sun.position.set(0.4, -0.6, 1);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+function resize() {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (!width || !height) return;
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+
+if (modelUrl) {
+  const draco = new DRACOLoader();
+  draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  loader.load(modelUrl, function (gltf) {
+    const model = gltf.scene;
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    model.traverse(function (obj) {
+      if (obj.isMesh && obj.geometry) {
+        obj.geometry.translate(-center.x, -center.y, -center.z);
+      }
+    });
+    scene.add(model);
+    const span = Math.max(size.x, size.y, 1);
+    const dist = span * 1.4;
+    camera.position.set(0, -dist * 0.8, dist * 0.8);
+    camera.near = Math.max(span / 1000, 0.01);
+    camera.far = span * 50;
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    controls.target.set(0, 0, 0);
+    controls.update();
+    resize();
+  }, undefined, function () {
+    fail("The model did not load.");
+  });
+}
+
+let showingOrtho = false;
+document.getElementById("orthoBtn").addEventListener("click", function () {
+  showingOrtho = !showingOrtho;
+  img.style.display = showingOrtho ? "block" : "none";
+  canvas.style.display = showingOrtho ? "none" : "block";
+  this.textContent = showingOrtho ? "MODEL" : "ORTHO";
+});
+
+function frame() {
+  resize();
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
