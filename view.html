@@ -12,9 +12,12 @@
   button.on { background: #2a4a28; border-color: #6d6; }
   button:disabled { opacity: 0.35; cursor: default; }
   #stage { position: relative; height: calc(100% - 3.2rem); background: #000; }
-  #view, #ortho { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #ortho { display: none; object-fit: contain; background: #000; z-index: 2; }
-  #pins { position: absolute; display: none; pointer-events: none; z-index: 3; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #orthoView { display: none; position: absolute; inset: 0; z-index: 2; overflow: hidden; background: #000; touch-action: none; cursor: grab; }
+  #orthoView.dragging { cursor: grabbing; }
+  #orthoFit { position: absolute; transform-origin: 0 0; }
+  #ortho { display: block; width: 100%; height: 100%; pointer-events: none; }
+  #pins { position: absolute; inset: 0; display: none; pointer-events: none; }
   #pins i { position: absolute; width: 11px; height: 11px; margin: -6px 0 0 -6px; border-radius: 50%; box-sizing: border-box; }
   #pins i.dot { background: #fff; border: 2px solid #111; }
   #pins i.x { background: transparent; border: 2px solid #ffe14a; }
@@ -31,8 +34,12 @@
 </div>
 <div id="stage">
   <canvas id="view"></canvas>
-  <img id="ortho" alt="Orthophoto">
-  <div id="pins"></div>
+  <div id="orthoView">
+    <div id="orthoFit">
+      <img id="ortho" alt="Orthophoto">
+      <div id="pins"></div>
+    </div>
+  </div>
 </div>
 <p id="err" hidden></p>
 <script type="importmap">
@@ -50,6 +57,8 @@ const params = new URLSearchParams(location.search);
 const hole = params.get("hole");
 const title = document.getElementById("title");
 const canvas = document.getElementById("view");
+const orthoView = document.getElementById("orthoView");
+const orthoFit = document.getElementById("orthoFit");
 const img = document.getElementById("ortho");
 const pinLayer = document.getElementById("pins");
 const err = document.getElementById("err");
@@ -115,6 +124,10 @@ let pinData = { dots: [], x: [] };
 let pinMode = "";
 let showingOrtho = false;
 let live = true;
+let viewScale = 1;
+let panX = 0;
+let panY = 0;
+let drag = null;
 let modelCenter = null;
 let modelRoot = null;
 
@@ -127,22 +140,55 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
-window.addEventListener("resize", layoutPins);
+window.addEventListener("resize", function () { layoutPins(); placeOrtho(); });
+
+function fitBox() {
+  const stage = document.getElementById("stage").getBoundingClientRect();
+  const fit = Math.min(stage.width / img.naturalWidth, stage.height / img.naturalHeight);
+  const width = img.naturalWidth * fit;
+  const height = img.naturalHeight * fit;
+  return {
+    width: width,
+    height: height,
+    left: (stage.width - width) / 2,
+    top: (stage.height - height) / 2,
+    stageWidth: stage.width,
+    stageHeight: stage.height
+  };
+}
+
+function clampPan() {
+  if (viewScale <= 1) {
+    viewScale = 1;
+    panX = 0;
+    panY = 0;
+    return;
+  }
+  const box = fitBox();
+  const width = box.width * viewScale;
+  const height = box.height * viewScale;
+  const margin = 48;
+  panX = Math.min(box.stageWidth - margin - box.left, Math.max(margin - box.left - width, panX));
+  panY = Math.min(box.stageHeight - margin - box.top, Math.max(margin - box.top - height, panY));
+}
+
+function placeOrtho() {
+  if (!showingOrtho || !img.naturalWidth) return;
+  clampPan();
+  const box = fitBox();
+  orthoFit.style.left = box.left + "px";
+  orthoFit.style.top = box.top + "px";
+  orthoFit.style.width = box.width + "px";
+  orthoFit.style.height = box.height + "px";
+  orthoFit.style.transform = "translate(" + panX.toFixed(1) + "px," + panY.toFixed(1) + "px) scale(" + viewScale.toFixed(4) + ")";
+}
 
 function layoutPins() {
   if (!showingOrtho || !pinMode || !frameInfo || !img.naturalWidth) {
     pinLayer.style.display = "none";
     return;
   }
-  const stage = document.getElementById("stage").getBoundingClientRect();
-  const scale = Math.min(stage.width / img.naturalWidth, stage.height / img.naturalHeight);
-  const width = img.naturalWidth * scale;
-  const height = img.naturalHeight * scale;
   pinLayer.style.display = "block";
-  pinLayer.style.left = ((stage.width - width) / 2) + "px";
-  pinLayer.style.top = ((stage.height - height) / 2) + "px";
-  pinLayer.style.width = width + "px";
-  pinLayer.style.height = height + "px";
   const points = pinData[pinMode] || [];
   const kind = pinMode === "x" ? "x" : "dot";
   const html = [];
@@ -155,6 +201,48 @@ function layoutPins() {
   }
   pinLayer.innerHTML = html.join("");
 }
+
+orthoView.addEventListener("wheel", function (event) {
+  if (!showingOrtho || !img.naturalWidth) return;
+  event.preventDefault();
+  const box = fitBox();
+  const rect = orthoView.getBoundingClientRect();
+  const cx = event.clientX - rect.left;
+  const cy = event.clientY - rect.top;
+  const next = Math.min(8, Math.max(1, viewScale * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  const worldX = (cx - box.left - panX) / viewScale;
+  const worldY = (cy - box.top - panY) / viewScale;
+  viewScale = next;
+  panX = cx - worldX * viewScale - box.left;
+  panY = cy - worldY * viewScale - box.top;
+  placeOrtho();
+}, { passive: false });
+
+orthoView.addEventListener("pointerdown", function (event) {
+  if (!showingOrtho || event.button !== 0) return;
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, panX: panX, panY: panY };
+  orthoView.setPointerCapture(event.pointerId);
+  orthoView.classList.add("dragging");
+});
+orthoView.addEventListener("pointermove", function (event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  panX = drag.panX + event.clientX - drag.x;
+  panY = drag.panY + event.clientY - drag.y;
+  placeOrtho();
+});
+function endDrag(event) {
+  if (!drag || event.pointerId !== drag.id) return;
+  drag = null;
+  orthoView.classList.remove("dragging");
+}
+orthoView.addEventListener("pointerup", endDrag);
+orthoView.addEventListener("pointercancel", endDrag);
+orthoView.addEventListener("dblclick", function () {
+  viewScale = 1;
+  panX = 0;
+  panY = 0;
+  placeOrtho();
+});
 
 function setPins(mode) {
   if (pinMode === mode) mode = "";
@@ -239,11 +327,12 @@ if (folder) {
 
 document.getElementById("orthoBtn").addEventListener("click", function () {
   showingOrtho = !showingOrtho;
-  img.style.display = showingOrtho ? "block" : "none";
+  orthoView.style.display = showingOrtho ? "block" : "none";
   this.textContent = showingOrtho ? "MODEL" : "ORTHO";
   if (showingOrtho) {
     live = false;
     layoutPins();
+    placeOrtho();
     return;
   }
   pinLayer.style.display = "none";
@@ -252,7 +341,7 @@ document.getElementById("orthoBtn").addEventListener("click", function () {
     requestAnimationFrame(frame);
   }
 });
-img.addEventListener("load", layoutPins);
+img.addEventListener("load", function () { layoutPins(); placeOrtho(); });
 
 function frame() {
   if (!live) return;
