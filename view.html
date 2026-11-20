@@ -6,12 +6,18 @@
 <title>Awbrey Glen</title>
 <style>
   html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 16px/1.4 system-ui, sans-serif; }
-  #bar { display: flex; gap: 1rem; align-items: center; padding: 0.7rem 1rem; }
+  #bar { display: flex; gap: 0.6rem; align-items: center; padding: 0.7rem 1rem; }
   a { color: #9dccff; }
   button { color: #eee; background: #1c2430; border: 1px solid #3d4d66; border-radius: 6px; font: inherit; padding: 0.25rem 0.8rem; cursor: pointer; }
+  button.on { background: #2a4a28; border-color: #6d6; }
+  button:disabled { opacity: 0.35; cursor: default; }
   #stage { position: relative; height: calc(100% - 3.2rem); background: #000; }
   #view, #ortho { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #ortho { display: none; object-fit: contain; background: #000; }
+  #ortho { display: none; object-fit: contain; background: #000; z-index: 2; }
+  #pins { position: absolute; display: none; pointer-events: none; z-index: 3; }
+  #pins i { position: absolute; width: 11px; height: 11px; margin: -6px 0 0 -6px; border-radius: 50%; box-sizing: border-box; }
+  #pins i.dot { background: #fff; border: 2px solid #111; }
+  #pins i.x { background: transparent; border: 2px solid #ffe14a; }
   #err { padding: 1.5rem; }
 </style>
 </head>
@@ -20,10 +26,13 @@
   <a href="./">All holes</a>
   <strong id="title">Hole</strong>
   <button id="orthoBtn" type="button">ORTHO</button>
+  <button id="dotBtn" type="button" disabled>Dots</button>
+  <button id="xBtn" type="button" disabled>X</button>
 </div>
 <div id="stage">
   <canvas id="view"></canvas>
   <img id="ortho" alt="Orthophoto">
+  <div id="pins"></div>
 </div>
 <p id="err" hidden></p>
 <script type="importmap">
@@ -42,40 +51,47 @@ const hole = params.get("hole");
 const title = document.getElementById("title");
 const canvas = document.getElementById("view");
 const img = document.getElementById("ortho");
+const pinLayer = document.getElementById("pins");
 const err = document.getElementById("err");
+const dotBtn = document.getElementById("dotBtn");
+const xBtn = document.getElementById("xBtn");
 
 function fail(message) {
   err.hidden = false;
   err.textContent = message;
 }
 
+const special = {
+  "17-original": ["Hole 17 · original", "holes/17-original/"],
+  "17-spray": ["Hole 17 · four videos", "holes/17-spray/"]
+};
 let label = "";
-let modelUrl = "";
-let orthoUrl = "";
-if (hole === "17-original") {
-  label = "Hole 17 original";
-  modelUrl = "holes/17-original/model.glb";
-  orthoUrl = "holes/17-original/ortho.jpg";
+let folder = "";
+if (special[hole]) {
+  label = special[hole][0];
+  folder = special[hole][1];
 } else {
   const n = Number(hole);
   if (!Number.isInteger(n) || n < 1 || n > 18) {
     fail("Open a hole from the list.");
   } else {
-    const id = String(n).padStart(2, "0");
-    label = "Hole " + n;
-    modelUrl = "holes/" + id + "/model.glb";
-    orthoUrl = "holes/" + id + "/ortho.jpg";
+    label = n === 17 ? "Hole 17 · sprinklers" : "Hole " + n;
+    folder = "holes/" + String(n).padStart(2, "0") + "/";
   }
 }
 if (label) {
   title.textContent = label;
   document.title = label + " — Awbrey Glen";
-  img.src = orthoUrl;
+  img.src = folder + "ortho.jpg";
   img.alt = label + " orthophoto";
 }
 
-const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const renderer = new THREE.WebGLRenderer({
+  canvas: canvas,
+  antialias: false,
+  powerPreference: "high-performance"
+});
+renderer.setPixelRatio(1);
 renderer.setClearColor(0x111111);
 const scene = new THREE.Scene();
 scene.add(new THREE.AmbientLight(0xffffff, 0.9));
@@ -87,6 +103,21 @@ camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
+const dotGroup = new THREE.Group();
+const xGroup = new THREE.Group();
+dotGroup.visible = false;
+xGroup.visible = false;
+scene.add(dotGroup);
+scene.add(xGroup);
+
+let frameInfo = null;
+let pinData = { dots: [], x: [] };
+let pinMode = "";
+let showingOrtho = false;
+let live = true;
+let modelCenter = null;
+let modelRoot = null;
+
 function resize() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
@@ -96,23 +127,101 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
+window.addEventListener("resize", layoutPins);
 
-if (modelUrl) {
+function layoutPins() {
+  if (!showingOrtho || !pinMode || !frameInfo || !img.naturalWidth) {
+    pinLayer.style.display = "none";
+    return;
+  }
+  const stage = document.getElementById("stage").getBoundingClientRect();
+  const scale = Math.min(stage.width / img.naturalWidth, stage.height / img.naturalHeight);
+  const width = img.naturalWidth * scale;
+  const height = img.naturalHeight * scale;
+  pinLayer.style.display = "block";
+  pinLayer.style.left = ((stage.width - width) / 2) + "px";
+  pinLayer.style.top = ((stage.height - height) / 2) + "px";
+  pinLayer.style.width = width + "px";
+  pinLayer.style.height = height + "px";
+  const points = pinData[pinMode] || [];
+  const kind = pinMode === "x" ? "x" : "dot";
+  const html = [];
+  for (let i = 0; i < points.length; i++) {
+    const easting = points[i][0];
+    const northing = points[i][1];
+    const x = (easting - frameInfo.west) / frameInfo.gsdX / frameInfo.w * 100;
+    const y = (frameInfo.north - northing) / frameInfo.gsdY / frameInfo.h * 100;
+    html.push('<i class="' + kind + '" style="left:' + x.toFixed(2) + '%;top:' + y.toFixed(2) + '%"></i>');
+  }
+  pinLayer.innerHTML = html.join("");
+}
+
+function setPins(mode) {
+  if (pinMode === mode) mode = "";
+  pinMode = mode;
+  dotGroup.visible = mode === "dots";
+  xGroup.visible = mode === "x";
+  dotBtn.classList.toggle("on", mode === "dots");
+  xBtn.classList.toggle("on", mode === "x");
+  layoutPins();
+}
+dotBtn.addEventListener("click", function () { setPins("dots"); });
+xBtn.addEventListener("click", function () { setPins("x"); });
+
+function addMarkers(group, points, kind) {
+  const material = kind === "x"
+    ? new THREE.MeshBasicMaterial({ color: 0xffe14a, depthTest: false })
+    : new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+  const geometry = kind === "x"
+    ? new THREE.TorusGeometry(1.15, 0.22, 6, 16)
+    : new THREE.SphereGeometry(0.7, 8, 6);
+  const down = new THREE.Vector3(0, 0, -1);
+  const ray = new THREE.Raycaster();
+  modelRoot.updateMatrixWorld(true);
+  for (let i = 0; i < points.length; i++) {
+    const x = points[i][0] - frameInfo.ox - modelCenter.x;
+    const y = points[i][1] - frameInfo.oy - modelCenter.y;
+    ray.set(new THREE.Vector3(x, y, 80), down);
+    const hit = modelRoot ? ray.intersectObject(modelRoot, true)[0] : null;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, y, hit ? hit.point.z + 0.5 : 1);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 2;
+    group.add(mesh);
+  }
+}
+
+function markersReady() {
+  if (!modelCenter || !frameInfo || dotGroup.children.length || xGroup.children.length) return;
+  addMarkers(dotGroup, pinData.dots, "dot");
+  addMarkers(xGroup, pinData.x, "x");
+}
+
+if (folder) {
+  fetch(folder + "frame.json").then(function (r) { return r.json(); }).then(function (data) {
+    frameInfo = data;
+    markersReady();
+  }).catch(function () { fail("The photo position did not load."); });
+  fetch(folder + "pins.json").then(function (r) { return r.json(); }).then(function (data) {
+    pinData = data;
+    dotBtn.disabled = !(data.dots && data.dots.length);
+    xBtn.disabled = !(data.x && data.x.length);
+    markersReady();
+  }).catch(function () {});
   const draco = new DRACOLoader();
   draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
   const loader = new GLTFLoader();
   loader.setDRACOLoader(draco);
-  loader.load(modelUrl, function (gltf) {
+  loader.load(folder + "model.glb", function (gltf) {
     const model = gltf.scene;
+    modelRoot = model;
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    model.traverse(function (obj) {
-      if (obj.isMesh && obj.geometry) {
-        obj.geometry.translate(-center.x, -center.y, -center.z);
-      }
-    });
+    model.position.set(-center.x, -center.y, -center.z);
+    modelCenter = center;
     scene.add(model);
+    markersReady();
     const span = Math.max(size.x, size.y, 1);
     const dist = span * 1.4;
     camera.position.set(0, -dist * 0.8, dist * 0.8);
@@ -128,15 +237,25 @@ if (modelUrl) {
   });
 }
 
-let showingOrtho = false;
 document.getElementById("orthoBtn").addEventListener("click", function () {
   showingOrtho = !showingOrtho;
   img.style.display = showingOrtho ? "block" : "none";
-  canvas.style.display = showingOrtho ? "none" : "block";
   this.textContent = showingOrtho ? "MODEL" : "ORTHO";
+  if (showingOrtho) {
+    live = false;
+    layoutPins();
+    return;
+  }
+  pinLayer.style.display = "none";
+  if (!live) {
+    live = true;
+    requestAnimationFrame(frame);
+  }
 });
+img.addEventListener("load", layoutPins);
 
 function frame() {
+  if (!live) return;
   resize();
   controls.update();
   renderer.render(scene, camera);

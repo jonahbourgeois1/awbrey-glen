@@ -8,20 +8,21 @@
   body { margin: 0; background: #111; color: #eee; font: 16px/1.4 system-ui, sans-serif; }
   header { padding: 1.4rem 1.4rem 0.4rem; }
   h1 { font-size: 1.6rem; margin: 0 0 0.3rem; }
+  h2 { font-size: 1.05rem; font-weight: 650; margin: 0; padding: 1.1rem 1.2rem 0; }
   p { margin: 0; color: #bbb; max-width: 40rem; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.8rem; padding: 1.2rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.8rem; padding: 0.7rem 1.2rem 1.2rem; }
   a.card { color: inherit; text-decoration: none; background: #1a1a1a; border-radius: 8px; overflow: hidden; }
   a.card img { width: 100%; height: 150px; object-fit: cover; background: #000; display: block; }
   a.card span { display: block; padding: 0.45rem 0.7rem 0.6rem; }
-  .extra { padding: 0 1.4rem 2rem; }
   a { color: #9dccff; }
 </style>
 </head>
 <body>
 <header>
   <h1>Awbrey Glen</h1>
-  <p>Open a hole for the 3D model. The ORTHO button on that page is the overhead photo.</p>
+  <p>Open a hole for the 3D model. ORTHO is the overhead photo. Dots are the filled marks on the layout. X is the circled-X marks. Switching those does not reload the model.</p>
 </header>
+<h2>Holes</h2>
 <div class="grid">
   <a class="card" href="view.html?hole=1"><img src="holes/01/ortho.jpg" alt=""><span>Hole 1</span></a>
   <a class="card" href="view.html?hole=2"><img src="holes/02/ortho.jpg" alt=""><span>Hole 2</span></a>
@@ -39,9 +40,13 @@
   <a class="card" href="view.html?hole=14"><img src="holes/14/ortho.jpg" alt=""><span>Hole 14</span></a>
   <a class="card" href="view.html?hole=15"><img src="holes/15/ortho.jpg" alt=""><span>Hole 15</span></a>
   <a class="card" href="view.html?hole=16"><img src="holes/16/ortho.jpg" alt=""><span>Hole 16</span></a>
-  <a class="card" href="view.html?hole=17"><img src="holes/17/ortho.jpg" alt=""><span>Hole 17</span></a>
   <a class="card" href="view.html?hole=18"><img src="holes/18/ortho.jpg" alt=""><span>Hole 18</span></a>
 </div>
-<p class="extra"><a href="hole17.html">Hole 17, original beside the sprinkler rerun</a></p>
+<h2>Hole 17</h2>
+<div class="grid">
+  <a class="card" href="view.html?hole=17-spray"><img src="holes/17-spray/ortho.jpg" alt=""><span>Four videos</span></a>
+  <a class="card" href="view.html?hole=17-original"><img src="holes/17-original/ortho.jpg" alt=""><span>Original</span></a>
+  <a class="card" href="view.html?hole=17"><img src="holes/17/ortho.jpg" alt=""><span>Sprinklers</span></a>
+</div>
 </body>
 </html>
